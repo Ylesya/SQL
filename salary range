@@ -1,0 +1,18 @@
+-- Получение статистики по заработной плате
+SELECT	MIN(salary_from) AS min_salary_from_RUB,
+		MAX(salary_from) AS max_salary_from_RUB,
+		ROUND(AVG (salary_from),2) AS AVG_salary_from_RUB,
+		MIN(salary_to) AS min_salary_to_RUB,
+		MAX(salary_to) AS max_salary_to_RUB,
+		ROUND(AVG (salary_to),2) AS AVG_salary_to_RUB,
+		ROUND(AVG (salary_from)/88.6,2) AS AVG_salary_from_USD,--USD/RUB 88.6
+		ROUND(AVG (salary_to)/88.6,2) AS AVG_salary_to_USD--USD/RUB 88.6	
+FROM public.parcing_table
+WHERE salary_from>1000 AND salary_from>0 AND salary_to>0
+
+-- Минимальная предлагаемая зарплата начинается с 50 рублей, что, скорее всего, является ошибкой данных -->исключена фильтром
+
+
+-- Средняя зарплата в категории «от» составляет около 1251 USD, 
+--а в категории «до» — около 1742 USD. Это указывает на то, что работодатели готовы платить
+--аналитикам данных и системным аналитикам в среднем около 1500 USD. 
