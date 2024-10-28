@@ -1,0 +1,277 @@
+
+ * Автор: Мусабаева Алеся Талгатовна
+ * Дата: 25.10.2024
+*/
+
+-- Пример фильтрации данных от аномальных значений
+-- Определим аномальные значения (выбросы) по значению перцентилей:
+WITH limits AS (
+    SELECT  
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY total_area) AS total_area_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY rooms) AS rooms_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY balcony) AS balcony_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_h,
+        PERCENTILE_DISC(0.01) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_l
+    FROM real_estate.flats     
+),
+-- Найдем id объявлений, которые не содержат выбросы:
+filtered_id AS(
+    SELECT id
+    FROM real_estate.flats  
+    WHERE 
+        total_area < (SELECT total_area_limit FROM limits) 
+        AND rooms < (SELECT rooms_limit FROM limits) 
+        AND balcony < (SELECT balcony_limit FROM limits) 
+        AND ceiling_height < (SELECT ceiling_height_limit_h FROM limits) 
+        AND ceiling_height > (SELECT ceiling_height_limit_l FROM limits)
+    )
+-- Выведем объявления без выбросов:
+SELECT *
+FROM real_estate.flats
+WHERE id IN (SELECT * FROM filtered_id);
+
+
+-- Задача 1: Время активности объявлений
+-- Результат запроса должен ответить на такие вопросы:
+-- 1. Какие сегменты рынка недвижимости Санкт-Петербурга и городов Ленинградской области 
+--    имеют наиболее короткие или длинные сроки активности объявлений?
+-- 2. Какие характеристики недвижимости, включая площадь недвижимости, среднюю стоимость квадратного метра, 
+--    количество комнат и балконов и другие параметры, влияют на время активности объявлений? 
+--    Как эти зависимости варьируют между регионами?
+-- 3. Есть ли различия между недвижимостью Санкт-Петербурга и Ленинградской области по полученным результатам?
+
+-- -- Определим аномальные значения (выбросы) по значению перцентилей:
+-- Определим аномальные значения (выбросы) по значению перцентилей:
+WITH limits AS (
+    SELECT  
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY total_area) AS total_area_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY rooms) AS rooms_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY balcony) AS balcony_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_h,
+        PERCENTILE_DISC(0.01) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_l
+    FROM real_estate.flats     
+),
+-- Найдём id объявлений, которые не содержат выбросы:
+filtered_id AS(
+    SELECT id
+    FROM real_estate.flats  
+    WHERE 
+        total_area < (SELECT total_area_limit FROM limits) 
+        AND rooms < (SELECT rooms_limit FROM limits) 
+        AND balcony < (SELECT balcony_limit FROM limits) 
+        AND ceiling_height < (SELECT ceiling_height_limit_h FROM limits) 
+        AND ceiling_height > (SELECT ceiling_height_limit_l FROM limits)
+    ),
+-- Выведем объявления без выбросов:
+filtered_data as (
+SELECT *
+FROM real_estate.flats
+WHERE id IN (SELECT * FROM filtered_id) 
+),
+-- Добавляем категоризацию на Лен обл и С-П
+category_date as
+(select CASE 
+        WHEN c.city LIKE 'Санкт-Петербург' THEN 'Санкт-Петербург'
+        ELSE 'ЛенОбл'
+    END AS "Регион",
+	    CASE 
+		    WHEN days_exposition between 1 and 30
+			THEN 'до месяца'
+			WHEN days_exposition between 31 and 90
+			THEN 'до трех месяцев'
+			WHEN days_exposition between 91 and 180
+			THEN 'до полугода'
+			ELSE 'более полугода'
+			end as "Сегмент активности",
+			count(id) as "Количество объявлений",
+			AVG(a.last_price/fd.total_area) as "Средняя стоимость кв. метра",
+			AVG(fd.total_area) as "Средняя площадь",
+			AVG(kitchen_area) as "Средняя площадь кухни",
+			percentile_disc(0.5) within group (order by rooms) as "Медиана количества комнат",
+			percentile_disc(0.5) within group (order by balcony) as "Медиана количества балконов",
+			percentile_disc(0.5) within group (order by floor) as "Медиана этажности",
+			AVG(ceiling_height) as "Средняя высота потолка",
+			sum(case when fd.open_plan=1 then 1 else 0 end)/count(id)::float as "Доля квартир-студий",
+			count(id)/SUM(count(id)) OVER () AS "Доля проданных объявлений"
+from filtered_data as fd
+left join real_estate.city as c using (city_id)
+left join real_estate.advertisement as a using (id)
+left join real_estate.type as t using (type_id)
+where type_id='F8EM' -->фильтр на года по просьбе ревьювера
+group by  "Регион","Сегмент активности"
+order by "Доля проданных объявлений" desc
+)
+select*,
+		"Количество объявлений"/sum("Количество объявлений") over (partition by "Регион") as "Доля объявлений в группе",
+		"Количество объявлений"/sum("Количество объявлений") over () as "Общая доля объявлений",
+		sum("Количество объявлений") over (partition by "Регион")/sum("Количество объявлений") over ()  as "Доля группы в общем объеме"
+from category_date
+
+
+--Регион         |Сегмент активности|Количество объявлений|Средняя стоимость кв. метра|Средняя площадь   |Средняя площадь кухни|Медиана количества комнат|Медиана количества балконов|Медиана этажности|Средняя высота потолка|Доля квартир-студий  |Доля проданных объявлений|Доля объявлений в группе|Общая доля объявлений |Доля группы в общем объеме|
+---------------+------------------+---------------------+---------------------------+------------------+---------------------+-------------------------+---------------------------+-----------------+----------------------+---------------------+-------------------------+------------------------+----------------------+--------------------------+
+--ЛенОбл         |до месяца         |                   96|          81611.27119954427| 49.52958341439565|   10.045666636361016|                        1|                        1.0|                4|    2.7223958149552345|                  0.0|   0.02152466367713004484|  0.12260536398467432950|0.02152466367713004484|    0.17556053811659192825|
+--ЛенОбл         |более полугода    |                  347|          74893.14119911744| 59.70417869194097|   10.511428570463544|                        2|                        1.0|                4|     2.725533123318675|                  0.0|   0.07780269058295964126|  0.44316730523627075351|0.07780269058295964126|    0.17556053811659192825|
+--ЛенОбл         |до трех месяцев   |                  189|          76524.53566261574|  53.4136507649901|    9.575000002143089|                        2|                        1.0|                4|     2.703386224766888|                  0.0|   0.04237668161434977578|  0.24137931034482758621|0.04237668161434977578|    0.17556053811659192825|
+--ЛенОбл         |до полугода       |                  151|           75360.0131803601| 55.94649009199332|    9.787074844853407|                        2|                        1.0|                4|    2.6963575944205784|                  0.0|   0.03385650224215246637|  0.19284802043422733078|0.03385650224215246637|    0.17556053811659192825|
+--Санкт-Петербург|более полугода    |                 1443|         120406.82477098492| 67.73803184202622|   12.408322635843957|                        2|                        1.0|                6|     2.792016619869346| 0.001386001386001386|   0.32354260089686098655|  0.39243948871362523797|0.32354260089686098655|    0.82443946188340807175|
+--Санкт-Петербург|до трех месяцев   |                  900|         113358.52656684027|58.886355548434786|   11.036277713130207|                        2|                        1.0|                6|    2.7566333198547364|0.0033333333333333335|   0.20179372197309417040|  0.24476475387544193636|0.20179372197309417040|    0.82443946188340807175|
+--Санкт-Петербург|до полугода       |                  702|         113997.80608417913| 61.57831901702446|   11.584055251160333|                        2|                        1.0|                6|     2.767877480922601|                  0.0|   0.15739910313901345291|  0.19091650802284471036|0.15739910313901345291|    0.82443946188340807175|
+--Санкт-Петербург|до месяца         |                  632|         112377.60538839993|55.569034817852554|   10.619506593597563|                        2|                        1.0|                6|     2.735237331330022|                  0.0|   0.14170403587443946188|  0.17187924938808811531|0.14170403587443946188|    0.82443946188340807175|
+
+-- Задача 2: Сезонность объявлений
+-- Результат запроса должен ответить на такие вопросы:
+-- 1. В какие месяцы наблюдается наибольшая активность в публикации объявлений о продаже недвижимости? 
+--    А в какие — по снятию? Это показывает динамику активности покупателей.
+-- 2. Совпадают ли периоды активной публикации объявлений и периоды, 
+--    когда происходит повышенная продажа недвижимости (по месяцам снятия объявлений)?
+-- 3. Как сезонные колебания влияют на среднюю стоимость квадратного метра и среднюю площадь квартир? 
+--    Что можно сказать о зависимости этих параметров от месяца?
+
+WITH limits AS (
+    SELECT  
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY total_area) AS total_area_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY rooms) AS rooms_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY balcony) AS balcony_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_h,
+        PERCENTILE_DISC(0.01) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_l
+    FROM real_estate.flats     
+),
+-- Найдём id объявлений, которые не содержат выбросы:
+filtered_id AS(
+    SELECT id
+    FROM real_estate.flats  
+    WHERE 
+        total_area < (SELECT total_area_limit FROM limits) 
+        AND rooms < (SELECT rooms_limit FROM limits) 
+        AND balcony < (SELECT balcony_limit FROM limits) 
+        AND ceiling_height < (SELECT ceiling_height_limit_h FROM limits) 
+        AND ceiling_height > (SELECT ceiling_height_limit_l FROM limits)
+    ),
+-- Выведем объявления без выбросов:
+filtered_data as (
+SELECT *
+FROM real_estate.flats
+WHERE id IN (SELECT * FROM filtered_id) 
+),
+-- Добавляем сте по снятых и опубликованных объявлениям в разрезе и мерджим
+union_data as (
+select EXTRACT(month from a.first_day_exposition) as "номер месяц",
+		count (id) as "количество объявлений",
+		'опубликованные' as "Тип объявлений",
+		AVG(a.last_price/fd.total_area) as "Средняя стоимость кв. метра",
+		AVG(fd.total_area) as "Средняя площадь"
+from filtered_data as fd
+left join real_estate.advertisement as a using (id)
+left join real_estate.type as t using (type_id)
+where EXTRACT(year from a.first_day_exposition) in (2015,2016,2017,2018) and type_id='F8EM' --выбираем года с целыми месячными данными и тип "город"
+group by "номер месяц"
+union 
+select EXTRACT(month from first_day_exposition + (days_exposition * INTERVAL '1 day'))as "номер месяца",
+		count (id) as "количество объявлений",
+		'снятые' as "Тип объявлений",
+		AVG(a.last_price/fd.total_area) as "Средняя стоимость кв. метра",
+		AVG(fd.total_area) as "Средняя площадь"
+from filtered_data as fd
+left join real_estate.advertisement as a using (id)
+where days_exposition is not null and EXTRACT(year from a.first_day_exposition) in (2015,2016,2017,2018)and type_id='F8EM'--убираем активные объявления и выбираем года с целыми месячными данными
+group by "номер месяца"
+)
+select "номер месяц",
+SUM(CASE WHEN "Тип объявлений" = 'опубликованные' THEN "количество объявлений" ELSE 0 END) AS "опубликованные объявления",
+SUM(CASE WHEN "Тип объявлений" = 'снятые' THEN "количество объявлений" ELSE 0 END) AS "снятые объявления",
+sum(CASE WHEN "Тип объявлений" = 'опубликованные' THEN "Средняя стоимость кв. метра" ELSE 0 END) as "Средняя стоимость опубликованных об кв. метра",
+sum(CASE WHEN "Тип объявлений" = 'снятые' THEN "Средняя стоимость кв. метра" ELSE 0 END) as "Средняя стоимость снятых об кв. метра",
+sum(CASE WHEN "Тип объявлений" = 'опубликованные' THEN "Средняя площадь" ELSE 0 END) as "Средняя площадь опубликованных об кв. метра",
+sum(CASE WHEN "Тип объявлений" = 'снятые' THEN "Средняя площадь" ELSE 0 END) as "Средняя площадь снятых об кв. метра"
+from union_data
+group by "номер месяц"
+
+--номер месяц|опубликованные объявления|снятые объявления|Средняя стоимость опубликованных|Средняя стоимость снятых об кв. ме|Средняя площадь опубликованных об|Средняя площадь снятых об кв. метр|
+-----------+-------------------------+-----------------+--------------------------------+----------------------------------+---------------------------------+----------------------------------+
+--          1|                      207|              304|              113429.20455917875|                112416.24793122945|               62.826763245218615|                 61.61256583113419|
+--          2|                      404|              252|              107644.48101504486|                107711.33832465278|                61.70626239965458|                  61.6915475451757|
+--          3|                      297|              299|              101753.21886179503|                107631.72434155518|                61.15558910690976|                 58.03260861272397|
+--          4|                      315|              258|              103222.50249255952|                105391.18034611191|                62.38904761662559|                 59.74817824548529|
+--          5|                      335|              203|              106822.21988106343|                105882.28767703201|                61.44677622780871|                 60.49320185243202|
+--          6|                      329|              225|               106349.4453006269|                103106.36693576389|               61.310395087152266|                 62.95235556708442|
+--          7|                      333|              363|              109820.31767900713|                106572.16771048553|                 63.0055855816907|                 62.09820947042838|
+--          8|                      349|              360|              108889.44091377148|                104919.13911675347|                61.42948424986918|                  58.7142777495914|
+--          9|                      372|              334|              111423.44385290658|                106402.75349691242|               59.757392375699936|                 60.05889217582291|
+--         10|                      350|              438|              107367.21319754464|                106327.82482074058|                58.69925704956054|                60.555273970512495|
+--         11|                      398|              421|              110211.16443545854|                108616.65406027315|               60.941808992893854|                 58.97092633462575|
+--         12|                      213|              260|              108542.38488482981|                108423.22442908653|                61.42943665231338|                 62.57692301089947|
+
+
+-- Задача 3: Анализ рынка недвижимости Ленобласти
+-- Результат запроса должен ответить на такие вопросы:
+-- 1. В каких населённые пунктах Ленинградской области наиболее активно публикуют объявления о продаже недвижимости?
+-- 2. В каких населённых пунктах Ленинградской области — самая высокая доля снятых с публикации объявлений? 
+--    Это может указывать на высокую долю продажи недвижимости.
+-- 3. Какова средняя стоимость одного квадратного метра и средняя площадь продаваемых квартир в различных населённых пунктах? 
+--    Есть ли вариация значений по этим метрикам?
+-- 4. Среди выделенных населённых пунктов какие пункты выделяются по продолжительности публикации объявлений? 
+--    То есть где недвижимость продаётся быстрее, а где — медленнее.
+
+-- Напишите ваш запрос здесь
+-- Определим аномальные значения (выбросы) по значению перцентилей:
+WITH limits AS (
+    SELECT  
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY total_area) AS total_area_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY rooms) AS rooms_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY balcony) AS balcony_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_h,
+        PERCENTILE_DISC(0.01) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_l
+    FROM real_estate.flats     
+),
+-- Найдём id объявлений, которые не содержат выбросы:
+filtered_id AS(
+    SELECT id
+    FROM real_estate.flats  
+    WHERE 
+        total_area < (SELECT total_area_limit FROM limits) 
+        AND rooms < (SELECT rooms_limit FROM limits) 
+        AND balcony < (SELECT balcony_limit FROM limits) 
+        AND ceiling_height < (SELECT ceiling_height_limit_h FROM limits) 
+        AND ceiling_height > (SELECT ceiling_height_limit_l FROM limits)
+    ),
+-- Выведем объявления без выбросов:
+filtered_data as (
+SELECT *
+FROM real_estate.flats
+WHERE id IN (SELECT * FROM filtered_id) 
+),
+-- Добавляем фильтрацию на Лен обл
+Len as (
+select 	city,
+			count(fd.id) as num,
+			sum(case when a.days_exposition is not null then 1 else 0 end)/count(fd.id)::float as share_removed,
+			avg(last_price/total_area) as avg_p_m2,
+			avg(fd.total_area) as avg_TA,
+			AVG(a.days_exposition ) as avg_days --исключаем активные публикации
+from filtered_data as fd
+left join real_estate.city as c using (city_id)
+left join real_estate.advertisement as a using (id)
+left join real_estate.type as t using(type_id)
+where c.city not LIKE 'Санкт-Петербург'--убираем активные объявления и С-П
+group by city
+)
+select city as "Город",
+		num as "Количество объявлений",
+		share_removed as "Доля снятых объявлений",
+		avg_p_m2 as "Ср цена за м2",
+		avg_TA as "Ср площадь",
+		avg_TA as "Средняя продожительность",
+ntile(4) over (order by avg_days) as "Сегмент"
+from Len
+where num>50
+--Город     |Количество объявлений|Доля снятых объявлений|Ср цена за м2     |Ср площадь       |Средняя продожительность|Сегмент|
+----------+---------------------+----------------------+------------------+-----------------+------------------------+-------+
+--Шушары    |                  112|    0.8660714285714286| 79891.99591936384|57.28187487806593|       57.28187487806593|      1|
+--Мурино    |                  147|    0.9319727891156463| 87901.44807610544|45.02408156103017|       45.02408156103017|      1|
+--Парголово |                   83|    0.9156626506024096| 89111.69408885542|51.51698799592903|       51.51698799592903|      2|
+--Колпино   |                   54|    0.8888888888888888| 76098.35489004629|56.65740761933503|       56.65740761933503|      2|
+--Кудрово   |                  136|    0.9264705882352942| 97783.87396599265| 46.6923530662761|        46.6923530662761|      3|
+--Сестрорецк|                   64|              0.921875| 101940.9107055664|65.14828106760979|       65.14828106760979|      3|
+--Всеволожск|                  121|    0.8347107438016529| 68018.63991477272| 58.2766114542307|        58.2766114542307|      4|
+--Пушкин    |                   74|    0.8783783783783784|103927.93839738176|64.07189196509285|       64.07189196509285|      4|
